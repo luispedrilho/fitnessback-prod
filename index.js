@@ -6,6 +6,8 @@ import { OpenAI } from "openai";
 import pkg from "pg";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { autenticar } from "./auth.js";
+
 
 const { Pool } = pkg;
 
@@ -31,20 +33,17 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
-app.post("/gerar-plano", async (req, res) => {
+app.post("/gerar-plano", autenticar, async (req, res) => {
   const { respostas, tipo } = req.body;
-  if (!respostas || !Array.isArray(respostas) || respostas.length === 0) {
-    return res.status(400).json({ error: "Respostas inválidas" });
+  const usuario_id = req.usuario?.id;
+
+  if (!usuario_id || !respostas || !Array.isArray(respostas) || respostas.length === 0) {
+    return res.status(400).json({ error: "Requisição inválida" });
   }
-  if (!tipo || (tipo !== "alimentacao" && tipo !== "treino")) {
-    return res.status(400).json({ error: "Tipo inválido. Use 'alimentacao' ou 'treino'" });
-  }
-  let promptBase = "";
-  if (tipo === "alimentacao") {
-    promptBase = `Sou um nutricionista. Com base nas respostas abaixo, gere um plano alimentar personalizado para a pessoa, considerando saúde, equilíbrio nutricional e seus objetivos:`;
-  } else if (tipo === "treino") {
-    promptBase = `Sou um personal trainer. Com base nas respostas abaixo, gere um plano de treino personalizado, levando em conta segurança, frequência recomendada e objetivos da pessoa:`;
-  }
+
+  const promptBase = tipo === "treino"
+    ? "Sou um personal trainer. Com base nas respostas abaixo..."
+    : "Sou um nutricionista. Com base nas respostas abaixo...";
 
   const prompt = `${promptBase}\n${respostas.map((r, i) => `Pergunta ${i + 1}: ${r}`).join("\n")}`;
 
@@ -57,8 +56,8 @@ app.post("/gerar-plano", async (req, res) => {
     const plano = completion.choices[0]?.message?.content;
 
     await pool.query(
-      "INSERT INTO anamneses (tipo, respostas, plano, criado_em) VALUES ($1, $2, $3, NOW())",
-      [tipo, JSON.stringify(respostas), plano]
+      "INSERT INTO anamneses (tipo, respostas, plano, criado_em, usuario_id) VALUES ($1, $2, $3, NOW(), $4)",
+      [tipo, JSON.stringify(respostas), plano, usuario_id]
     );
 
     return res.json({ plano });
@@ -119,6 +118,23 @@ app.post("/auth/login", async (req, res) => {
     res.status(500).json({ error: "Erro ao fazer login" });
   }
 });
+
+app.get("/meus-planos", autenticar, async (req, res) => {
+  const usuario_id = req.usuario?.id;
+
+  try {
+    const result = await pool.query(
+      "SELECT id, tipo, plano, criado_em FROM anamneses WHERE usuario_id = $1 ORDER BY criado_em DESC",
+      [usuario_id]
+    );
+
+    res.json({ planos: result.rows });
+  } catch (err) {
+    console.error("Erro ao buscar planos:", err);
+    res.status(500).json({ error: "Erro ao buscar planos" });
+  }
+});
+
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
