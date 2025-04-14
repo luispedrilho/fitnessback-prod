@@ -7,7 +7,10 @@ import pkg from "pg";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { autenticar } from "./auth.js";
+import fs from "fs";
 
+const promptTreino = fs.readFileSync("./prompts/treino.txt", "utf8");
+const promptAlimentacao = fs.readFileSync("./prompts/alimentacao.txt", "utf8");
 
 const { Pool } = pkg;
 
@@ -40,10 +43,8 @@ app.post("/gerar-plano", autenticar, async (req, res) => {
   if (!usuario_id || !respostas || !Array.isArray(respostas) || respostas.length === 0) {
     return res.status(400).json({ error: "Requisição inválida" });
   }
-
-  const promptBase = tipo === "treino"
-    ? "Sou um personal trainer. Com base nas respostas abaixo..."
-    : "Sou um nutricionista. Com base nas respostas abaixo...";
+  
+  const promptBase = tipo === "treino" ? promptTreino : promptAlimentacao;
 
   const prompt = `${promptBase}\n${respostas.map((r, i) => `Pergunta ${i + 1}: ${r}`).join("\n")}`;
 
@@ -132,6 +133,37 @@ app.get("/meus-planos", autenticar, async (req, res) => {
   } catch (err) {
     console.error("Erro ao buscar planos:", err);
     res.status(500).json({ error: "Erro ao buscar planos" });
+  }
+});
+
+app.put("/editar-plano/:id", autenticar, async (req, res) => {
+  const planoId = req.params.id;
+  const novoPlano = req.body.plano;
+  const usuario_id = req.usuario?.id;
+
+  if (!planoId || !novoPlano || !usuario_id) {
+    return res.status(400).json({ error: "Requisição inválida" });
+  }
+
+  try {
+    // Verifica se o plano pertence ao usuário
+    const result = await pool.query("SELECT * FROM anamneses WHERE id = $1 AND usuario_id = $2", [planoId, usuario_id]);
+
+    if (result.rowCount === 0) {
+      return res.status(403).json({ error: "Você não tem permissão para editar este plano" });
+    }
+
+    await pool.query(
+      `UPDATE anamneses 
+       SET plano = $1, editado_por = $2, editado_em = NOW() 
+       WHERE id = $3`,
+      [novoPlano, usuario_id, planoId]
+    );
+
+    res.json({ sucesso: true, mensagem: "Plano atualizado com sucesso" });
+  } catch (err) {
+    console.error("Erro ao editar plano:", err);
+    res.status(500).json({ error: "Erro ao editar plano" });
   }
 });
 
