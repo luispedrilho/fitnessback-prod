@@ -3,6 +3,8 @@ import cors from "cors";
 import { config } from "dotenv";
 import { OpenAI } from "openai";
 import pkg from "pg";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
 
 const { Pool } = pkg;
 
@@ -21,6 +23,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
+// --------- ROTA PARA GERAR PLANO ---------
 app.post("/gerar-plano", async (req, res) => {
   const { respostas, tipo } = req.body;
 
@@ -65,6 +68,59 @@ Sou um personal trainer. Com base nas respostas abaixo, gere um plano de treino 
   } catch (error) {
     console.error("Erro ao gerar plano:", error);
     return res.status(500).json({ error: "Erro ao gerar plano" });
+  }
+});
+
+// --------- ROTAS DE AUTENTICAÇÃO ---------
+app.post("/auth/register", async (req, res) => {
+  const { nome, email, senha } = req.body;
+
+  if (!nome || !email || !senha) {
+    return res.status(400).json({ error: "Campos obrigatórios ausentes" });
+  }
+
+  try {
+    const usuarioExistente = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
+    if (usuarioExistente.rows.length > 0) {
+      return res.status(400).json({ error: "E-mail já cadastrado." });
+    }
+
+    const hash = await bcrypt.hash(senha, 10);
+    const result = await pool.query(
+      "INSERT INTO usuarios (nome, email, senha, criado_em) VALUES ($1, $2, $3, NOW()) RETURNING id, nome, email",
+      [nome, email, hash]
+    );
+
+    const token = jwt.sign({ id: result.rows[0].id }, process.env.JWT_SECRET, {
+      expiresIn: "7d",
+    });
+
+    res.status(201).json({ usuario: result.rows[0], token });
+  } catch (err) {
+    console.error("Erro ao registrar usuário:", err);
+    res.status(500).json({ error: "Erro ao registrar" });
+  }
+});
+
+app.post("/auth/login", async (req, res) => {
+  const { email, senha } = req.body;
+
+  try {
+    const result = await pool.query("SELECT * FROM usuarios WHERE email = $1", [email]);
+    const user = result.rows[0];
+
+    if (!user || !(await bcrypt.compare(senha, user.senha))) {
+      return res.status(401).json({ error: "Credenciais inválidas" });
+    }
+
+    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
+      expiresIn: "7d",
+    });
+
+    res.json({ token, usuario: { id: user.id, nome: user.nome, email: user.email } });
+  } catch (err) {
+    console.error("Erro ao fazer login:", err);
+    res.status(500).json({ error: "Erro ao fazer login" });
   }
 });
 
