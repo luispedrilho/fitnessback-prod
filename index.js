@@ -1,4 +1,4 @@
-// index.js com bcryptjs e CORS corrigido para produção
+// index.js com leitura de arquivos protegida e estrutura robusta para produção
 import express from "express";
 import cors from "cors";
 import { config } from "dotenv";
@@ -9,11 +9,17 @@ import jwt from "jsonwebtoken";
 import { autenticar } from "./auth.js";
 import fs from "fs";
 
-const promptTreino = fs.readFileSync("./prompts/treino.txt", "utf8");
-const promptAlimentacao = fs.readFileSync("./prompts/alimentacao.txt", "utf8");
+let promptTreino = "";
+let promptAlimentacao = "";
+try {
+  promptTreino = fs.readFileSync("./prompts/treino.txt", "utf8");
+  promptAlimentacao = fs.readFileSync("./prompts/alimentacao.txt", "utf8");
+  console.log("Prompts carregados com sucesso.");
+} catch (err) {
+  console.error("Erro ao carregar os arquivos de prompt:", err.message);
+}
 
 const { Pool } = pkg;
-
 config();
 const app = express();
 
@@ -43,9 +49,8 @@ app.post("/gerar-plano", autenticar, async (req, res) => {
   if (!usuario_id || !respostas || !Array.isArray(respostas) || respostas.length === 0) {
     return res.status(400).json({ error: "Requisição inválida" });
   }
-  
-  const promptBase = tipo === "treino" ? promptTreino : promptAlimentacao;
 
+  const promptBase = tipo === "treino" ? promptTreino : promptAlimentacao;
   const prompt = `${promptBase}\n${respostas.map((r, i) => `Pergunta ${i + 1}: ${r}`).join("\n")}`;
 
   try {
@@ -146,7 +151,6 @@ app.put("/editar-plano/:id", autenticar, async (req, res) => {
   }
 
   try {
-    // Verifica se o plano pertence ao usuário
     const result = await pool.query("SELECT * FROM anamneses WHERE id = $1 AND usuario_id = $2", [planoId, usuario_id]);
 
     if (result.rowCount === 0) {
@@ -154,9 +158,7 @@ app.put("/editar-plano/:id", autenticar, async (req, res) => {
     }
 
     await pool.query(
-      `UPDATE anamneses 
-       SET plano = $1, editado_por = $2, editado_em = NOW() 
-       WHERE id = $3`,
+      `UPDATE anamneses SET plano = $1, editado_por = $2, editado_em = NOW() WHERE id = $3`,
       [novoPlano, usuario_id, planoId]
     );
 
@@ -166,7 +168,6 @@ app.put("/editar-plano/:id", autenticar, async (req, res) => {
     res.status(500).json({ error: "Erro ao editar plano" });
   }
 });
-
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
