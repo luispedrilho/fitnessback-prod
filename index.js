@@ -1,51 +1,49 @@
+// index.js com bcryptjs e CORS corrigido para produção
 import express from "express";
 import cors from "cors";
 import { config } from "dotenv";
 import { OpenAI } from "openai";
 import pkg from "pg";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
 const { Pool } = pkg;
 
 config();
 const app = express();
-app.use(cors());
+
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://anamnese-ia-iota.vercel.app"
+  ],
+  credentials: true
+}));
+
 app.use(express.json());
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Conexão com PostgreSQL via Railway
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
-// --------- ROTA PARA GERAR PLANO ---------
 app.post("/gerar-plano", async (req, res) => {
   const { respostas, tipo } = req.body;
-
-  console.log("Requisição recebida:", req.body);
-
   if (!respostas || !Array.isArray(respostas) || respostas.length === 0) {
     return res.status(400).json({ error: "Respostas inválidas" });
   }
-
   if (!tipo || (tipo !== "alimentacao" && tipo !== "treino")) {
     return res.status(400).json({ error: "Tipo inválido. Use 'alimentacao' ou 'treino'" });
   }
-
   let promptBase = "";
   if (tipo === "alimentacao") {
-    promptBase = `
-Sou um nutricionista. Com base nas respostas abaixo, gere um plano alimentar personalizado para a pessoa, considerando saúde, equilíbrio nutricional e seus objetivos:
-`;
+    promptBase = `Sou um nutricionista. Com base nas respostas abaixo, gere um plano alimentar personalizado para a pessoa, considerando saúde, equilíbrio nutricional e seus objetivos:`;
   } else if (tipo === "treino") {
-    promptBase = `
-Sou um personal trainer. Com base nas respostas abaixo, gere um plano de treino personalizado, levando em conta segurança, frequência recomendada e objetivos da pessoa:
-`;
+    promptBase = `Sou um personal trainer. Com base nas respostas abaixo, gere um plano de treino personalizado, levando em conta segurança, frequência recomendada e objetivos da pessoa:`;
   }
 
   const prompt = `${promptBase}\n${respostas.map((r, i) => `Pergunta ${i + 1}: ${r}`).join("\n")}`;
@@ -58,7 +56,6 @@ Sou um personal trainer. Com base nas respostas abaixo, gere um plano de treino 
 
     const plano = completion.choices[0]?.message?.content;
 
-    // Salvar no banco
     await pool.query(
       "INSERT INTO anamneses (tipo, respostas, plano, criado_em) VALUES ($1, $2, $3, NOW())",
       [tipo, JSON.stringify(respostas), plano]
@@ -71,7 +68,6 @@ Sou um personal trainer. Com base nas respostas abaixo, gere um plano de treino 
   }
 });
 
-// --------- ROTAS DE AUTENTICAÇÃO ---------
 app.post("/auth/register", async (req, res) => {
   const { nome, email, senha } = req.body;
 
